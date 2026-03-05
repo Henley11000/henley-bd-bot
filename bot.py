@@ -2,17 +2,14 @@ import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 )
 
 logging.basicConfig(level=logging.INFO)
-TOKEN = os.environ.get("BOT_TOKEN")
 
-# ── 你自己的 Telegram user ID，收通知用 ──
+TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
-# ── 各地区推广话术模板 ──
 TEMPLATES = {
     "my": """Hi! 👋 I'm Henley from HashWhale — a crypto lending & yield platform.
 
@@ -55,19 +52,17 @@ Nous cherchons des partenaires communautaires en France 🤝
 N'hésitez pas à me contacter en DM 😊""",
 }
 
-# ── 追踪记录（存在内存，重启会清空，够用） ──
-contacts = {}  # { community_name: { region, status, notes } }
+contacts = {}
 
-# ─────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 嗨 Henley！我是你的 HashWhale BD 助手\n\n"
         "指令列表：\n"
         "/template — 查看各地区推广话术\n"
-        "/add — 添加新联系的社区\n"
+        "/add 群名 地区 备注 — 添加联系记录\n"
         "/list — 查看所有联系记录\n"
-        "/update — 更新某个社区状态\n"
-        "/stats — 今日统计"
+        "/update 群名 状态 — 更新状态\n"
+        "/stats — 统计进度"
     )
 
 async def template(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -79,7 +74,7 @@ async def template(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🇫🇷 Paris", callback_data="tpl_paris")],
     ]
     await update.message.reply_text("选择地区查看话术模板 👇",
-                                     reply_markup=InlineKeyboardMarkup(keyboard))
+                                    reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -88,16 +83,15 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if region in TEMPLATES:
         await query.message.reply_text(
             f"📋 话术模板：\n\n{TEMPLATES[region]}\n\n"
-            "👆 复制上面的内容，手动发到群里或私信给群主"
+            "👆 复制内容，手动发到群里或私信群主"
         )
 
 async def add_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """用法: /add 群名 地区 备注"""
     args = ctx.args
     if len(args) < 2:
         await update.message.reply_text(
             "用法：/add 群名 地区(my/vn/ph/dubai/paris) 备注\n"
-            "例：/add MalaysiaCryptoHub my 群主叫 Ali，5000人"
+            "例：/add MalaysiaCryptoHub my 群主叫Ali，5000人"
         )
         return
     name = args[0]
@@ -117,13 +111,9 @@ async def list_contacts(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text)
 
 async def update_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """用法: /update 群名 新状态"""
     args = ctx.args
     if len(args) < 2:
-        await update.message.reply_text(
-            "用法：/update 群名 状态\n"
-            "状态选项：已联系 / 有回复 / 已合作 / 无回应"
-        )
+        await update.message.reply_text("用法：/update 群名 状态\n状态：已联系 / 有回复 / 已合作 / 无回应")
         return
     name = args[0]
     status = " ".join(args[1:])
@@ -132,13 +122,8 @@ async def update_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     contacts[name]["status"] = status
     await update.message.reply_text(f"✅ 已更新：{name} → {status}")
-    # 如果有回复，提醒 admin
-    if "回复" in status or "合作" in status:
-        if ADMIN_ID:
-            await ctx.bot.send_message(
-                ADMIN_ID,
-                f"🔔 注意！{name} 状态更新为「{status}」，快去跟进！"
-            )
+    if ("回复" in status or "合作" in status) and ADMIN_ID:
+        await ctx.bot.send_message(ADMIN_ID, f"🔔 {name} 状态更新为「{status}」，快去跟进！")
 
 async def stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     total = len(contacts)
@@ -152,15 +137,14 @@ async def stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"📈 回复率：{round(replied/total*100) if total else 0}%"
     )
 
-# ─────────────────────────────────────────
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("template", template))
-app.add_handler(CommandHandler("add", add_contact))
-app.add_handler(CommandHandler("list", list_contacts))
-app.add_handler(CommandHandler("update", update_status))
-app.add_handler(CommandHandler("stats", stats))
-app.add_handler(CallbackQueryHandler(button_handler))
-
-print("Bot is running...")
-app.run_polling()
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("template", template))
+    app.add_handler(CommandHandler("add", add_contact))
+    app.add_handler(CommandHandler("list", list_contacts))
+    app.add_handler(CommandHandler("update", update_status))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    print("Bot is running...")
+    app.run_polling()
