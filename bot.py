@@ -2,11 +2,11 @@ import os
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, filters
 )
 
 logging.basicConfig(level=logging.INFO)
-
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
@@ -54,14 +54,33 @@ N'hésitez pas à me contacter en DM 😊""",
 
 contacts = {}
 
+def clean_name(raw):
+    name = raw.strip()
+    if "t.me/" in name:
+        name = name.split("t.me/")[-1].strip("/").strip()
+    return name
+
+def find_contact(keyword):
+    keyword = keyword.lower()
+    for k in contacts:
+        if k.lower() == keyword:
+            return k
+    matches = [k for k in contacts if keyword in k.lower()]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        return matches
+    return None
+
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 嗨 Henley！我是你的 HashWhale BD 助手\n\n"
-        "指令列表：\n"
-        "/template — 查看各地区推广话术\n"
-        "/add 群名 地区 备注 — 添加联系记录\n"
-        "/list — 查看所有联系记录\n"
-        "/update 群名 状态 — 更新状态\n"
+        "📌 指令：\n"
+        "/template — 查看各地区话术\n"
+        "/add — 添加社区（支持直接粘贴 t.me 链接！）\n"
+        "/list — 查看所有记录\n"
+        "/update — 更新状态\n"
+        "/delete — 删除记录\n"
         "/stats — 统计进度"
     )
 
@@ -73,32 +92,32 @@ async def template(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("🇦🇪 Dubai", callback_data="tpl_dubai")],
         [InlineKeyboardButton("🇫🇷 Paris", callback_data="tpl_paris")],
     ]
-    await update.message.reply_text("选择地区查看话术模板 👇",
-                                    reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("选择地区 👇", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     region = query.data.replace("tpl_", "")
     if region in TEMPLATES:
-        await query.message.reply_text(
-            f"📋 话术模板：\n\n{TEMPLATES[region]}\n\n"
-            "👆 复制内容，手动发到群里或私信群主"
-        )
+        await query.message.reply_text(f"📋 话术模板：\n\n{TEMPLATES[region]}\n\n👆 复制发给群主！")
 
 async def add_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     args = ctx.args
     if len(args) < 2:
         await update.message.reply_text(
-            "用法：/add 群名 地区(my/vn/ph/dubai/paris) 备注\n"
-            "例：/add MalaysiaCryptoHub my 群主叫Ali，5000人"
+            "用法：/add 群链接或群名 地区 备注\n"
+            "例：/add t.me/MalaysiaCrypto my 群主叫Ali\n"
+            "地区：my / vn / ph / dubai / paris"
         )
         return
-    name = args[0]
-    region = args[1]
+    raw_name = args[0]
+    name = clean_name(raw_name)
+    region = args[1].lower()
     notes = " ".join(args[2:]) if len(args) > 2 else ""
-    contacts[name] = {"region": region, "status": "已联系", "notes": notes}
-    await update.message.reply_text(f"✅ 已记录：{name} ({region})\n备注：{notes}")
+    contacts[name] = {"region": region, "status": "已联系", "notes": notes, "link": raw_name if "t.me" in raw_name else ""}
+    await update.message.reply_text(
+        f"✅ 已记录！\n群组：{name}\n地区：{region.upper()}\n备注：{notes if notes else '无'}"
+    )
 
 async def list_contacts(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not contacts:
@@ -107,44 +126,70 @@ async def list_contacts(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = "📋 联系记录：\n\n"
     for name, info in contacts.items():
         emoji = {"已联系": "📨", "有回复": "💬", "已合作": "🤝", "无回应": "❌"}.get(info["status"], "📌")
-        text += f"{emoji} {name} [{info['region'].upper()}]\n状态：{info['status']}\n备注：{info['notes']}\n\n"
+        link_text = f"\n🔗 {info['link']}" if info.get("link") else ""
+        text += f"{emoji} {name} [{info['region'].upper()}]\n状态：{info['status']}\n备注：{info['notes']}{link_text}\n\n"
     await update.message.reply_text(text)
 
 async def update_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     args = ctx.args
     if len(args) < 2:
-        await update.message.reply_text("用法：/update 群名 状态\n状态：已联系 / 有回复 / 已合作 / 无回应")
+        await update.message.reply_text(
+            "用法：/update 群名关键词 状态\n"
+            "状态：已联系 / 有回复 / 已合作 / 无回应\n"
+            "💡 群名只打一部分也能匹配！"
+        )
         return
-    name = args[0]
+    keyword = args[0]
     status = " ".join(args[1:])
-    if name not in contacts:
-        await update.message.reply_text(f"找不到 {name}，请先用 /add 添加")
+    result = find_contact(keyword)
+    if result is None:
+        await update.message.reply_text(f"找不到「{keyword}」，用 /list 查看所有群名")
         return
-    contacts[name]["status"] = status
-    await update.message.reply_text(f"✅ 已更新：{name} → {status}")
+    if isinstance(result, list):
+        await update.message.reply_text(f"找到多个匹配：{', '.join(result)}\n请输入更完整的名字")
+        return
+    contacts[result]["status"] = status
+    await update.message.reply_text(f"✅ 已更新：{result} → {status}")
     if ("回复" in status or "合作" in status) and ADMIN_ID:
-        await ctx.bot.send_message(ADMIN_ID, f"🔔 {name} 状态更新为「{status}」，快去跟进！")
+        await ctx.bot.send_message(ADMIN_ID, f"🔔 {result} 状态更新为「{status}」，快去跟进！")
+
+async def delete_contact(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    args = ctx.args
+    if not args:
+        await update.message.reply_text("用法：/delete 群名关键词")
+        return
+    keyword = args[0]
+    result = find_contact(keyword)
+    if result is None:
+        await update.message.reply_text(f"找不到「{keyword}」")
+        return
+    if isinstance(result, list):
+        await update.message.reply_text(f"找到多个：{', '.join(result)}，请输入更完整的名字")
+        return
+    del contacts[result]
+    await update.message.reply_text(f"🗑️ 已删除：{result}")
 
 async def stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     total = len(contacts)
     replied = sum(1 for c in contacts.values() if "回复" in c["status"])
     partnered = sum(1 for c in contacts.values() if "合作" in c["status"])
     await update.message.reply_text(
-        f"📊 BD 进度统计\n\n"
-        f"📨 总联系社区：{total}\n"
+        f"📊 BD 进度\n\n"
+        f"📨 总联系：{total}\n"
         f"💬 有回复：{replied}\n"
         f"🤝 已合作：{partnered}\n"
         f"📈 回复率：{round(replied/total*100) if total else 0}%"
     )
 
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("template", template))
-    app.add_handler(CommandHandler("add", add_contact))
-    app.add_handler(CommandHandler("list", list_contacts))
-    app.add_handler(CommandHandler("update", update_status))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    print("Bot is running...")
-    app.run_polling()
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("template", template))
+app.add_handler(CommandHandler("add", add_contact))
+app.add_handler(CommandHandler("list", list_contacts))
+app.add_handler(CommandHandler("update", update_status))
+app.add_handler(CommandHandler("delete", delete_contact))
+app.add_handler(CommandHandler("stats", stats))
+app.add_handler(CallbackQueryHandler(button_handler))
+
+print("Bot is running...")
+app.run_polling()
